@@ -8,8 +8,9 @@ import android.hardware.SensorManager
 import android.os.AsyncTask
 import android.support.v7.app.AppCompatActivity
 import android.os.Bundle
+import android.util.Log
 import android.widget.Button
-import android.widget.TextView
+import org.apache.commons.math3.filter.*
 
 class MainActivity :
     AppCompatActivity(),
@@ -23,7 +24,6 @@ class MainActivity :
     private var sensorManager: SensorManager? = null
     private var accelerometerSensor: Sensor? = null
 
-    private var accelerometerTextView: TextView? = null
     private var reconnectButton: Button? = null
 
     private val serverIP = "10.42.0.1"
@@ -33,7 +33,9 @@ class MainActivity :
 
     private var lastTimeUpdateInterval: Long = 0
     private var lastTimeDeltaTime: Long = 0
-    private val updateInterval: Long = 300000000
+    private val updateInterval: Long = 200000000
+
+    private var kalman: KalmanFilter? = null
 
     private var x: Double = 0.0
     private var y: Double = 0.0
@@ -54,12 +56,12 @@ class MainActivity :
 
         ConnectTask().execute()
 
+        kalman = getKalman()
+
         lastTimeUpdateInterval = System.nanoTime()
         lastTimeDeltaTime = System.nanoTime()
 
-        accelerometerTextView = findViewById(R.id.accelerometer_text_view)
         reconnectButton = findViewById(R.id.reconnect_button)
-
         reconnectButton?.setOnClickListener {
             disconnect()
             ConnectTask().execute()
@@ -84,36 +86,101 @@ class MainActivity :
     override fun onSensorChanged(event: SensorEvent?) {
         val sensorEvent = event!!
 
-
         var time = System.nanoTime()
         val dt: Double = (time - lastTimeDeltaTime) / 1000000000.0
         lastTimeDeltaTime = time
 
-        x += sensorEvent.values[0] * dt
-        y += sensorEvent.values[1] * dt
-        z += sensorEvent.values[2] * dt
+        val data = doubleArrayOf(
+            sensorEvent.values[0].toDouble(),
+            sensorEvent.values[1].toDouble(),
+            sensorEvent.values[2].toDouble()
+        )
+
+        kalman?.predict()
+        kalman?.correct(data)
+
+        val estimation = kalman?.stateEstimation
+
+        Log.i("Estimation", estimation?.size.toString())
+
+        estimation?.let {
+            x = estimation[0]
+            y = estimation[1]
+            z = estimation[2]
+        }
 
         time = System.nanoTime()
         if (time - lastTimeUpdateInterval > updateInterval) {
             lastTimeUpdateInterval = time
 
             val dataString = "$x $y $z\n"
-            setAccelerometerText(dataString)
             tcpClient?.sendMessage(dataString)
 
-            x = 0.0
-            y = 0.0
-            z = 0.0
+//            x = 0.0
+//            y = 0.0
+//            z = 0.0
         }
+    }
+
+    private fun getKalman(): KalmanFilter {
+
+        val dt = 0.01
+        val ele = 0.5 * dt * dt
+        val processModel = DefaultProcessModel(
+            arrayOf(
+                doubleArrayOf(1.0, 0.0, 0.0, dt, 0.0, 0.0, ele, 0.0, 0.0),
+                doubleArrayOf(0.0, 1.0, 0.0, 0.0, dt, 0.0, 0.0, ele, 0.0),
+                doubleArrayOf(0.0, 0.0, 1.0, 0.0, 0.0, dt, 0.0, 0.0, ele),
+                doubleArrayOf(0.0, 0.0, 0.0, 1.0, 0.0, 0.0, dt, 0.0, 0.0),
+                doubleArrayOf(0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, dt, 0.0),
+                doubleArrayOf(0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, dt),
+                doubleArrayOf(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0),
+                doubleArrayOf(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0),
+                doubleArrayOf(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0)
+            ),
+            arrayOf(
+                doubleArrayOf(0.0),
+                doubleArrayOf(0.0),
+                doubleArrayOf(0.0),
+                doubleArrayOf(0.0),
+                doubleArrayOf(0.0),
+                doubleArrayOf(0.0),
+                doubleArrayOf(0.0),
+                doubleArrayOf(0.0),
+                doubleArrayOf(0.0)
+            ),
+            arrayOf(
+                doubleArrayOf(1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+                doubleArrayOf(0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+                doubleArrayOf(0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+                doubleArrayOf(0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+                doubleArrayOf(0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0),
+                doubleArrayOf(0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0),
+                doubleArrayOf(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0),
+                doubleArrayOf(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0),
+                doubleArrayOf(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0)
+            )
+        )
+
+        val measurementNoise = 1.0
+        val measurementModel = DefaultMeasurementModel(
+            arrayOf(
+                doubleArrayOf(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0),
+                doubleArrayOf(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0),
+                doubleArrayOf(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0)
+            ),
+            arrayOf(
+                doubleArrayOf(measurementNoise, 0.0, 0.0),
+                doubleArrayOf(0.0, measurementNoise, 0.0),
+                doubleArrayOf(0.0, 0.0, measurementNoise)
+            )
+        )
+
+        return KalmanFilter(processModel, measurementModel)
     }
 
     private fun disconnect() {
         tcpClient?.close()
         tcpClient = null
-    }
-
-
-    private fun setAccelerometerText(text: String) {
-        accelerometerTextView?.text = "Accelerometer: $text"
     }
 }
