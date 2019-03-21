@@ -11,6 +11,7 @@ import android.os.Bundle
 import android.widget.Button
 import android.widget.TextView
 import org.apache.commons.math3.filter.*
+import org.apache.commons.math3.complex.Quaternion
 import kotlin.math.pow
 
 class MainActivity :
@@ -24,6 +25,7 @@ class MainActivity :
 
     private var sensorManager: SensorManager? = null
     private var accelerometerSensor: Sensor? = null
+    private var rotationVectorSensor: Sensor? = null
 
     private var reconnectButton: Button? = null
     private var resetButton: Button? = null
@@ -45,6 +47,7 @@ class MainActivity :
 
     private var kalmanList = Array<KalmanFilter?>(stateSize) { null }
     private var output = DoubleArray(stateSize)
+    private var rotationVector = Quaternion.IDENTITY
 
     private var dt: Double = 0.0
 
@@ -90,8 +93,10 @@ class MainActivity :
 
         sensorManager = getSystemService(Context.SENSOR_SERVICE) as? SensorManager
         accelerometerSensor = sensorManager?.getDefaultSensor(Sensor.TYPE_LINEAR_ACCELERATION)
+        rotationVectorSensor = sensorManager?.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
 
         sensorManager?.registerListener(this, accelerometerSensor, SensorManager.SENSOR_DELAY_FASTEST)
+        sensorManager?.registerListener(this, rotationVectorSensor, SensorManager.SENSOR_DELAY_FASTEST)
 
         ConnectTask().execute()
     }
@@ -108,55 +113,70 @@ class MainActivity :
 
     override fun onSensorChanged(event: SensorEvent?) {
 
-        // Calculate average delta time between sensor updates and reinitialize everything with this average value:
-        if (deltaTimeListCount < deltaTimeListSize) {
-
-            val time = System.nanoTime()
-            deltaTimeList[deltaTimeListCount] = time - lastTimeDeltaTime
-            lastTimeDeltaTime = time
-
-            if (deltaTimeListCount == deltaTimeListSize - 1) {
-                val average = deltaTimeList.average()
-                dt = average / nanoSecondsInSecond
-                updateInterval = average.toLong()
-                averageDeltaTimeCalculated = true
-                reset()
-            }
-
-            deltaTimeListCount++
-        }
-
         event?.let { sensorEvent ->
 
-            // Update cached data with measurements, filtered with Kalman:
-            var time: Long = System.nanoTime()
-            if (time - lastTimeUpdateInterval > updateInterval) {
-                lastTimeUpdateInterval = time
+            val valuesDouble = sensorEvent.values.map { it.toDouble() }.toDoubleArray()
 
-                predict(sensorEvent.values.map { it.toDouble() }.toDoubleArray())
-            }
+            when (sensorEvent.sensor) {
 
-            // Send cached data:
-            time = System.nanoTime()
-            if (time - lastTimeSendInterval > sendInterval && averageDeltaTimeCalculated) {
-                lastTimeSendInterval = time
+                rotationVectorSensor -> {
+                    rotationVector = Quaternion(valuesDouble[0], valuesDouble[1], valuesDouble[2], valuesDouble[3])
+                }
 
-                tcpClient?.sendMessage("${output[0]} ${output[1]} ${output[2]}\n")
+                accelerometerSensor -> {
+
+                    // Calculate average delta time between sensor updates and reinitialize everything with this average value:
+                    if (deltaTimeListCount < deltaTimeListSize) {
+
+                        val time = System.nanoTime()
+                        deltaTimeList[deltaTimeListCount] = time - lastTimeDeltaTime
+                        lastTimeDeltaTime = time
+
+                        if (deltaTimeListCount == deltaTimeListSize - 1) {
+                            val average = deltaTimeList.average()
+                            dt = average / nanoSecondsInSecond
+                            updateInterval = average.toLong()
+                            averageDeltaTimeCalculated = true
+                            reset()
+                        }
+
+                        deltaTimeListCount++
+                    }
+
+                    // Update cached data with measurements, filtered with Kalman:
+                    var time: Long = System.nanoTime()
+                    if (time - lastTimeUpdateInterval > updateInterval) {
+                        lastTimeUpdateInterval = time
+
+                        predict(valuesDouble)
+                    }
+
+                    // Send cached data:
+                    time = System.nanoTime()
+                    if (time - lastTimeSendInterval > sendInterval && averageDeltaTimeCalculated) {
+                        lastTimeSendInterval = time
+
+                        tcpClient?.sendMessage("${output[0]} ${output[1]} ${output[2]}\n")
+                    }
+                }
             }
         }
     }
 
     private fun reset() {
         initializeKalmans()
+        rotationVector = Quaternion.IDENTITY
         output = output.map { 0.0 }.toDoubleArray()
     }
 
     private fun predict(data: DoubleArray) {
 
+        val rotated = rotationVector.conjugate.multiply(Quaternion(data)).vectorPart
+
         for (index in 0 until stateSize) {
             kalmanList[index]?.let {
                 it.predict()
-                it.correct(doubleArrayOf(data[index]))
+                it.correct(doubleArrayOf(rotated[index]))
                 output[index] = it.stateEstimation[0]
             }
         }
