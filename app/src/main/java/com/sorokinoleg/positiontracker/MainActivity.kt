@@ -34,14 +34,11 @@ class MainActivity :
 
     private var tcpClient: TCPClient? = null
 
-    private val nanoSeconds: Double = 1000000000.0
+    private val nanoSecondsInSecond: Long = 1000000000
 
     private var lastTimeSendInterval: Long = 0
     private var lastTimeUpdateInterval: Long = 0
-//    private val sendInterval: Long = 100000000
-//    private val sendInterval: Long = 10000000
     private val sendInterval: Long = 1000000
-//    private val updateInterval: Long = 9000000
     private var updateInterval: Long = 5000000
 
     private var stateSize = 3
@@ -49,9 +46,12 @@ class MainActivity :
     private var kalmanList = Array<KalmanFilter?>(stateSize) { null }
     private var output = DoubleArray(stateSize)
 
+    private var dt: Double = 0.0
+
+    // For average delta time calculation:
     private var averageDeltaTimeCalculated = false
     private var lastTimeDeltaTime: Long = 0
-    private var deltaTimeListSize = 10000
+    private var deltaTimeListSize = 1000
     private var deltaTimeList = LongArray(deltaTimeListSize)
     private var deltaTimeListCount = 0
 
@@ -109,19 +109,18 @@ class MainActivity :
     override fun onSensorChanged(event: SensorEvent?) {
 
         // Calculate average delta time between sensor updates and reinitialize everything with this average value:
-        while (deltaTimeListCount < deltaTimeListSize) {
+        if (deltaTimeListCount < deltaTimeListSize) {
 
             val time = System.nanoTime()
-            val dt = time - lastTimeDeltaTime
+            deltaTimeList[deltaTimeListCount] = time - lastTimeDeltaTime
             lastTimeDeltaTime = time
 
-            deltaTimeList[deltaTimeListCount] = dt
-
             if (deltaTimeListCount == deltaTimeListSize - 1) {
-                updateInterval = deltaTimeList.average().toLong()
-                reset()
+                val average = deltaTimeList.average()
+                dt = average / nanoSecondsInSecond
+                updateInterval = average.toLong()
                 averageDeltaTimeCalculated = true
-                statusTextView?.text = "Delta time calculated"
+                reset()
             }
 
             deltaTimeListCount++
@@ -166,11 +165,9 @@ class MainActivity :
     private fun createKalman(): KalmanFilter {
 
         val linearAccelerationError = 0.59820562601
+
         val s = linearAccelerationError.pow(2)
-
-        val n = 0.00001
-
-        val dt = updateInterval / nanoSeconds
+        val n = 0.000001
         val a = 0.5 * dt * dt
 
         val processModel = DefaultProcessModel(
