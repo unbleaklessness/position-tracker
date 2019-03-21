@@ -10,6 +10,7 @@ import android.support.v7.app.AppCompatActivity
 import android.os.Bundle
 import android.util.Log
 import android.widget.Button
+import android.widget.TextView
 import kotlinx.android.synthetic.main.activity_main.*
 import org.apache.commons.math3.filter.*
 import kotlin.math.pow
@@ -28,6 +29,8 @@ class MainActivity :
     private var accelerometerSensor: Sensor? = null
 
     private var reconnectButton: Button? = null
+    private var resetButton: Button? = null
+    private var statusTextView: TextView? = null
 
     private val serverIP = "10.42.0.1"
     private val serverPort = 7247
@@ -38,8 +41,11 @@ class MainActivity :
 
     private var lastTimeSendInterval: Long = 0
     private var lastTimeUpdateInterval: Long = 0
-    private val sendInterval: Long = 100000000
-    private val updateInterval: Long = 9000000
+//    private val sendInterval: Long = 100000000
+//    private val sendInterval: Long = 10000000
+    private val sendInterval: Long = 1000000
+//    private val updateInterval: Long = 9000000
+    private val updateInterval: Long = 5000000
 
     private var kalmanX: KalmanFilter? = null
     private var kalmanY: KalmanFilter? = null
@@ -48,6 +54,8 @@ class MainActivity :
     private var x: Double = 0.0
     private var y: Double = 0.0
     private var z: Double = 0.0
+
+    private var averageDtCalculated = false
 
     inner class ConnectTask : AsyncTask<Unit, Unit, Unit>() {
 
@@ -66,6 +74,13 @@ class MainActivity :
 
         lastTimeSendInterval = System.nanoTime()
         lastTimeUpdateInterval = System.nanoTime()
+
+        statusTextView = findViewById(R.id.status_text_view)
+
+        resetButton = findViewById(R.id.reset_button)
+        resetButton?.setOnClickListener {
+            reset()
+        }
 
         reconnectButton = findViewById(R.id.reconnect_button)
         reconnectButton?.setOnClickListener {
@@ -99,7 +114,7 @@ class MainActivity :
 //        val time = System.nanoTime()
 //        dt = (time - lastTimeDeltaTime) / nanoSeconds
 //        lastTimeDeltaTime = time
-//        status_text_view.text = dt.toString()
+//        statusTextView.text = dt.toString()
 
         event?.let { sensorEvent ->
 
@@ -118,6 +133,13 @@ class MainActivity :
                 tcpClient?.sendMessage("$x $y $z\n")
             }
         }
+    }
+
+    private fun reset() {
+        initializeKalmans()
+        x = 0.0
+        y = 0.0
+        z = 0.0
     }
 
     private fun predict(nx: Double, ny: Double, nz: Double) {
@@ -146,7 +168,8 @@ class MainActivity :
         val linearAccelerationError = 0.59820562601
         val s = linearAccelerationError.pow(2)
 
-        val n = 0.000001
+//        val n = 0.000001
+        val n = 0.00001
 
         val dt: Double = updateInterval / nanoSeconds
         val a = 0.5 * dt * dt
