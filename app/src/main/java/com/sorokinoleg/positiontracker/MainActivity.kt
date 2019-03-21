@@ -8,7 +8,9 @@ import android.hardware.SensorManager
 import android.os.AsyncTask
 import android.support.v7.app.AppCompatActivity
 import android.os.Bundle
+import android.util.Log
 import android.widget.Button
+import org.apache.commons.math3.filter.*
 
 class MainActivity :
     AppCompatActivity(),
@@ -33,12 +35,11 @@ class MainActivity :
     private var lastTimeDeltaTime: Long = 0
     private val updateInterval: Long = 200000000
 
-    private var px: Double = 0.0
-    private var py: Double = 0.0
-    private var pz: Double = 0.0
-    private var vx: Double = 0.0
-    private var vy: Double = 0.0
-    private var vz: Double = 0.0
+    private var kalman: KalmanFilter? = null
+
+    private var x: Double = 0.0
+    private var y: Double = 0.0
+    private var z: Double = 0.0
 
     inner class ConnectTask : AsyncTask<Unit, Unit, Unit>() {
 
@@ -54,6 +55,8 @@ class MainActivity :
         setContentView(R.layout.activity_main)
 
         ConnectTask().execute()
+
+        kalman = getKalman()
 
         lastTimeUpdateInterval = System.nanoTime()
         lastTimeDeltaTime = System.nanoTime()
@@ -87,21 +90,89 @@ class MainActivity :
         val dt: Double = (time - lastTimeDeltaTime) / 1000000000.0
         lastTimeDeltaTime = time
 
-        vx += 0.5 * sensorEvent.values[8].toDouble() * dt * dt
-        vy += 0.5 * sensorEvent.values[7].toDouble() * dt * dt
-        vz += 0.5 * sensorEvent.values[6].toDouble() * dt * dt
+        val data = doubleArrayOf(
+            sensorEvent.values[0].toDouble(),
+            sensorEvent.values[1].toDouble(),
+            sensorEvent.values[2].toDouble()
+        )
 
-        px += vx * dt
-        py += vy * dt
-        pz += vz * dt
+        kalman?.predict()
+        kalman?.correct(data)
+
+        val estimation = kalman?.stateEstimation
+
+        Log.i("Estimation", estimation?.size.toString())
+
+        estimation?.let {
+            x = estimation[0]
+            y = estimation[1]
+            z = estimation[2]
+        }
 
         time = System.nanoTime()
         if (time - lastTimeUpdateInterval > updateInterval) {
             lastTimeUpdateInterval = time
 
-            val dataString = "$px $py $pz\n"
+            val dataString = "$x $y $z\n"
             tcpClient?.sendMessage(dataString)
         }
+    }
+
+    private fun getKalman(): KalmanFilter {
+
+        val dt = 0.01
+        val ele = 0.5 * dt * dt
+        val processModel = DefaultProcessModel(
+            arrayOf(
+                doubleArrayOf(1.0, 0.0, 0.0, dt, 0.0, 0.0, ele, 0.0, 0.0),
+                doubleArrayOf(0.0, 1.0, 0.0, 0.0, dt, 0.0, 0.0, ele, 0.0),
+                doubleArrayOf(0.0, 0.0, 1.0, 0.0, 0.0, dt, 0.0, 0.0, ele),
+                doubleArrayOf(0.0, 0.0, 0.0, 1.0, 0.0, 0.0, dt, 0.0, 0.0),
+                doubleArrayOf(0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, dt, 0.0),
+                doubleArrayOf(0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, dt),
+                doubleArrayOf(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0),
+                doubleArrayOf(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0),
+                doubleArrayOf(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0)
+            ),
+            arrayOf(
+                doubleArrayOf(0.0),
+                doubleArrayOf(0.0),
+                doubleArrayOf(0.0),
+                doubleArrayOf(0.0),
+                doubleArrayOf(0.0),
+                doubleArrayOf(0.0),
+                doubleArrayOf(0.0),
+                doubleArrayOf(0.0),
+                doubleArrayOf(0.0)
+            ),
+            arrayOf(
+                doubleArrayOf(1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+                doubleArrayOf(0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+                doubleArrayOf(0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+                doubleArrayOf(0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+                doubleArrayOf(0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0),
+                doubleArrayOf(0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0),
+                doubleArrayOf(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0),
+                doubleArrayOf(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0),
+                doubleArrayOf(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0)
+            )
+        )
+
+        val measurementNoise = 1.0
+        val measurementModel = DefaultMeasurementModel(
+            arrayOf(
+                doubleArrayOf(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0),
+                doubleArrayOf(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0),
+                doubleArrayOf(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0)
+            ),
+            arrayOf(
+                doubleArrayOf(measurementNoise, 0.0, 0.0),
+                doubleArrayOf(0.0, measurementNoise, 0.0),
+                doubleArrayOf(0.0, 0.0, measurementNoise)
+            )
+        )
+
+        return KalmanFilter(processModel, measurementModel)
     }
 
     private fun disconnect() {
