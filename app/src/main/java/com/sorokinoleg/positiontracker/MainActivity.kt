@@ -10,7 +10,10 @@ import android.support.v7.app.AppCompatActivity
 import android.os.Bundle
 import android.util.Log
 import android.widget.Button
+import kotlinx.android.synthetic.main.activity_main.*
 import org.apache.commons.math3.filter.*
+import kotlin.math.pow
+import kotlin.math.sqrt
 
 class MainActivity :
     AppCompatActivity(),
@@ -35,8 +38,8 @@ class MainActivity :
 
     private var lastTimeSendInterval: Long = 0
     private var lastTimeUpdateInterval: Long = 0
-    private val sendInterval: Long = 200000000
-    private val updateInterval: Long = 1000
+    private val sendInterval: Long = 100000000
+    private val updateInterval: Long = 9000000
 
     private var kalmanX: KalmanFilter? = null
     private var kalmanY: KalmanFilter? = null
@@ -88,8 +91,18 @@ class MainActivity :
         // Do nothing.
     }
 
+//    private var dt: Double = 0.0
+//    private var lastTimeDeltaTime: Long = 0
+
     override fun onSensorChanged(event: SensorEvent?) {
+
+//        val time = System.nanoTime()
+//        dt = (time - lastTimeDeltaTime) / nanoSeconds
+//        lastTimeDeltaTime = time
+//        status_text_view.text = dt.toString()
+
         event?.let { sensorEvent ->
+
             var time: Long = System.nanoTime()
             if (time - lastTimeUpdateInterval > updateInterval) {
                 lastTimeUpdateInterval = time
@@ -131,9 +144,9 @@ class MainActivity :
     private fun createKalman(): KalmanFilter {
 
         val linearAccelerationError = 0.59820562601
-        val s = linearAccelerationError * linearAccelerationError
+        val s = linearAccelerationError.pow(2)
 
-        val n = 1.2
+        val n = 0.000001
 
         val dt: Double = updateInterval / nanoSeconds
         val a = 0.5 * dt * dt
