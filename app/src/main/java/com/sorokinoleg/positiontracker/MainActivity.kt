@@ -31,11 +31,16 @@ class MainActivity :
 
     private var tcpClient: TCPClient? = null
 
-    private var lastTimeUpdateInterval: Long = 0
-    private var lastTimeDeltaTime: Long = 0
-    private val updateInterval: Long = 200000000
+    private val nanoSeconds: Double = 1000000000.0
 
-    private var kalman: KalmanFilter? = null
+    private var lastTimeSendInterval: Long = 0
+    private var lastTimeUpdateInterval: Long = 0
+    private val sendInterval: Long = 200000000
+    private val updateInterval: Long = 1000
+
+    private var kalmanX: KalmanFilter? = null
+    private var kalmanY: KalmanFilter? = null
+    private var kalmanZ: KalmanFilter? = null
 
     private var x: Double = 0.0
     private var y: Double = 0.0
@@ -54,12 +59,10 @@ class MainActivity :
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        ConnectTask().execute()
+        initializeKalmans()
 
-        kalman = getKalman()
-
+        lastTimeSendInterval = System.nanoTime()
         lastTimeUpdateInterval = System.nanoTime()
-        lastTimeDeltaTime = System.nanoTime()
 
         reconnectButton = findViewById(R.id.reconnect_button)
         reconnectButton?.setOnClickListener {
@@ -71,6 +74,8 @@ class MainActivity :
         accelerometerSensor = sensorManager?.getDefaultSensor(Sensor.TYPE_LINEAR_ACCELERATION)
 
         sensorManager?.registerListener(this, accelerometerSensor, SensorManager.SENSOR_DELAY_FASTEST)
+
+        ConnectTask().execute()
     }
 
     override fun onPause() {
@@ -84,95 +89,89 @@ class MainActivity :
     }
 
     override fun onSensorChanged(event: SensorEvent?) {
-        val sensorEvent = event!!
+        event?.let { sensorEvent ->
+            var time: Long = System.nanoTime()
+            if (time - lastTimeUpdateInterval > updateInterval) {
+                lastTimeUpdateInterval = time
 
-        var time = System.nanoTime()
-        val dt: Double = (time - lastTimeDeltaTime) / 1000000000.0
-        lastTimeDeltaTime = time
+                val values = sensorEvent.values.map { it.toDouble() }
+                predict(values[0], values[1], values[2])
+            }
 
-        val data = doubleArrayOf(
-            sensorEvent.values[0].toDouble(),
-            sensorEvent.values[1].toDouble(),
-            sensorEvent.values[2].toDouble()
-        )
+            time = System.nanoTime()
+            if (time - lastTimeSendInterval > sendInterval) {
+                lastTimeSendInterval = time
 
-        kalman?.predict()
-        kalman?.correct(data)
-
-        val estimation = kalman?.stateEstimation
-
-        Log.i("Estimation", estimation?.size.toString())
-
-        estimation?.let {
-            x = estimation[0]
-            y = estimation[1]
-            z = estimation[2]
-        }
-
-        time = System.nanoTime()
-        if (time - lastTimeUpdateInterval > updateInterval) {
-            lastTimeUpdateInterval = time
-
-            val dataString = "$x $y $z\n"
-            tcpClient?.sendMessage(dataString)
+                tcpClient?.sendMessage("$x $y $z\n")
+            }
         }
     }
 
-    private fun getKalman(): KalmanFilter {
+    private fun predict(nx: Double, ny: Double, nz: Double) {
 
-        val dt = 0.01
-        val ele = 0.5 * dt * dt
+        kalmanX?.let {
+            it.predict()
+            it.correct(doubleArrayOf(nx))
+            x = it.stateEstimation[0]
+        }
+
+        kalmanY?.let {
+            it.predict()
+            it.correct(doubleArrayOf(ny))
+            y = it.stateEstimation[0]
+        }
+
+        kalmanZ?.let {
+            it.predict()
+            it.correct(doubleArrayOf(nz))
+            z = it.stateEstimation[0]
+        }
+    }
+
+    private fun createKalman(): KalmanFilter {
+
+        val linearAccelerationError = 0.59820562601
+        val s = linearAccelerationError * linearAccelerationError
+
+        val n = 1.2
+
+        val dt: Double = updateInterval / nanoSeconds
+        val a = 0.5 * dt * dt
+
         val processModel = DefaultProcessModel(
             arrayOf(
-                doubleArrayOf(1.0, 0.0, 0.0, dt, 0.0, 0.0, ele, 0.0, 0.0),
-                doubleArrayOf(0.0, 1.0, 0.0, 0.0, dt, 0.0, 0.0, ele, 0.0),
-                doubleArrayOf(0.0, 0.0, 1.0, 0.0, 0.0, dt, 0.0, 0.0, ele),
-                doubleArrayOf(0.0, 0.0, 0.0, 1.0, 0.0, 0.0, dt, 0.0, 0.0),
-                doubleArrayOf(0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, dt, 0.0),
-                doubleArrayOf(0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, dt),
-                doubleArrayOf(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0),
-                doubleArrayOf(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0),
-                doubleArrayOf(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0)
+                doubleArrayOf(1.0, dt, a),
+                doubleArrayOf(0.0, 1.0, dt),
+                doubleArrayOf(0.0, 0.0, 1.0)
             ),
             arrayOf(
-                doubleArrayOf(0.0),
-                doubleArrayOf(0.0),
-                doubleArrayOf(0.0),
-                doubleArrayOf(0.0),
-                doubleArrayOf(0.0),
-                doubleArrayOf(0.0),
                 doubleArrayOf(0.0),
                 doubleArrayOf(0.0),
                 doubleArrayOf(0.0)
             ),
             arrayOf(
-                doubleArrayOf(1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
-                doubleArrayOf(0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
-                doubleArrayOf(0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
-                doubleArrayOf(0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0),
-                doubleArrayOf(0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0),
-                doubleArrayOf(0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0),
-                doubleArrayOf(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0),
-                doubleArrayOf(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0),
-                doubleArrayOf(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0)
+                doubleArrayOf(1.0, 1.0, n),
+                doubleArrayOf(1.0, n, n * n),
+                doubleArrayOf(n, n * n, n * n * n)
             )
         )
 
-        val measurementNoise = 1.0
         val measurementModel = DefaultMeasurementModel(
             arrayOf(
-                doubleArrayOf(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0),
-                doubleArrayOf(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0),
-                doubleArrayOf(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0)
+                doubleArrayOf(0.0, 0.0, 1.0)
             ),
             arrayOf(
-                doubleArrayOf(measurementNoise, 0.0, 0.0),
-                doubleArrayOf(0.0, measurementNoise, 0.0),
-                doubleArrayOf(0.0, 0.0, measurementNoise)
+                doubleArrayOf(s)
             )
         )
 
         return KalmanFilter(processModel, measurementModel)
+    }
+
+    private fun initializeKalmans() {
+        kalmanX = createKalman()
+        kalmanY = createKalman()
+        kalmanZ = createKalman()
     }
 
     private fun disconnect() {
