@@ -8,13 +8,10 @@ import android.hardware.SensorManager
 import android.os.AsyncTask
 import android.support.v7.app.AppCompatActivity
 import android.os.Bundle
-import android.util.Log
 import android.widget.Button
 import android.widget.TextView
-import kotlinx.android.synthetic.main.activity_main.*
 import org.apache.commons.math3.filter.*
 import kotlin.math.pow
-import kotlin.math.sqrt
 
 class MainActivity :
     AppCompatActivity(),
@@ -45,17 +42,18 @@ class MainActivity :
 //    private val sendInterval: Long = 10000000
     private val sendInterval: Long = 1000000
 //    private val updateInterval: Long = 9000000
-    private val updateInterval: Long = 5000000
+    private var updateInterval: Long = 5000000
 
-    private var kalmanX: KalmanFilter? = null
-    private var kalmanY: KalmanFilter? = null
-    private var kalmanZ: KalmanFilter? = null
+    private var stateSize = 3
 
-    private var x: Double = 0.0
-    private var y: Double = 0.0
-    private var z: Double = 0.0
+    private var kalmanList = Array<KalmanFilter?>(stateSize) { null }
+    private var output = DoubleArray(stateSize)
 
-    private var averageDtCalculated = false
+    private var averageDeltaTimeCalculated = false
+    private var lastTimeDeltaTime: Long = 0
+    private var deltaTimeListSize = 10000
+    private var deltaTimeList = LongArray(deltaTimeListSize)
+    private var deltaTimeListCount = 0
 
     inner class ConnectTask : AsyncTask<Unit, Unit, Unit>() {
 
@@ -72,8 +70,10 @@ class MainActivity :
 
         initializeKalmans()
 
-        lastTimeSendInterval = System.nanoTime()
-        lastTimeUpdateInterval = System.nanoTime()
+        val time = System.nanoTime()
+        lastTimeSendInterval = time
+        lastTimeUpdateInterval = time
+        lastTimeDeltaTime = time
 
         statusTextView = findViewById(R.id.status_text_view)
 
@@ -106,60 +106,60 @@ class MainActivity :
         // Do nothing.
     }
 
-//    private var dt: Double = 0.0
-//    private var lastTimeDeltaTime: Long = 0
-
     override fun onSensorChanged(event: SensorEvent?) {
 
-//        val time = System.nanoTime()
-//        dt = (time - lastTimeDeltaTime) / nanoSeconds
-//        lastTimeDeltaTime = time
-//        statusTextView.text = dt.toString()
+        // Calculate average delta time between sensor updates and reinitialize everything with this average value:
+        while (deltaTimeListCount < deltaTimeListSize) {
+
+            val time = System.nanoTime()
+            val dt = time - lastTimeDeltaTime
+            lastTimeDeltaTime = time
+
+            deltaTimeList[deltaTimeListCount] = dt
+
+            if (deltaTimeListCount == deltaTimeListSize - 1) {
+                updateInterval = deltaTimeList.average().toLong()
+                reset()
+                averageDeltaTimeCalculated = true
+                statusTextView?.text = "Delta time calculated"
+            }
+
+            deltaTimeListCount++
+        }
 
         event?.let { sensorEvent ->
 
+            // Update cached data with measurements, filtered with Kalman:
             var time: Long = System.nanoTime()
             if (time - lastTimeUpdateInterval > updateInterval) {
                 lastTimeUpdateInterval = time
 
-                val values = sensorEvent.values.map { it.toDouble() }
-                predict(values[0], values[1], values[2])
+                predict(sensorEvent.values.map { it.toDouble() }.toDoubleArray())
             }
 
+            // Send cached data:
             time = System.nanoTime()
-            if (time - lastTimeSendInterval > sendInterval) {
+            if (time - lastTimeSendInterval > sendInterval && averageDeltaTimeCalculated) {
                 lastTimeSendInterval = time
 
-                tcpClient?.sendMessage("$x $y $z\n")
+                tcpClient?.sendMessage("${output[0]} ${output[1]} ${output[2]}\n")
             }
         }
     }
 
     private fun reset() {
         initializeKalmans()
-        x = 0.0
-        y = 0.0
-        z = 0.0
+        output = output.map { 0.0 }.toDoubleArray()
     }
 
-    private fun predict(nx: Double, ny: Double, nz: Double) {
+    private fun predict(data: DoubleArray) {
 
-        kalmanX?.let {
-            it.predict()
-            it.correct(doubleArrayOf(nx))
-            x = it.stateEstimation[0]
-        }
-
-        kalmanY?.let {
-            it.predict()
-            it.correct(doubleArrayOf(ny))
-            y = it.stateEstimation[0]
-        }
-
-        kalmanZ?.let {
-            it.predict()
-            it.correct(doubleArrayOf(nz))
-            z = it.stateEstimation[0]
+        for (index in 0 until stateSize) {
+            kalmanList[index]?.let {
+                it.predict()
+                it.correct(doubleArrayOf(data[index]))
+                output[index] = it.stateEstimation[0]
+            }
         }
     }
 
@@ -168,10 +168,9 @@ class MainActivity :
         val linearAccelerationError = 0.59820562601
         val s = linearAccelerationError.pow(2)
 
-//        val n = 0.000001
         val n = 0.00001
 
-        val dt: Double = updateInterval / nanoSeconds
+        val dt = updateInterval / nanoSeconds
         val a = 0.5 * dt * dt
 
         val processModel = DefaultProcessModel(
@@ -193,21 +192,17 @@ class MainActivity :
         )
 
         val measurementModel = DefaultMeasurementModel(
-            arrayOf(
-                doubleArrayOf(0.0, 0.0, 1.0)
-            ),
-            arrayOf(
-                doubleArrayOf(s)
-            )
+            arrayOf(doubleArrayOf(0.0, 0.0, 1.0)),
+            arrayOf(doubleArrayOf(s))
         )
 
         return KalmanFilter(processModel, measurementModel)
     }
 
     private fun initializeKalmans() {
-        kalmanX = createKalman()
-        kalmanY = createKalman()
-        kalmanZ = createKalman()
+        for (index in 0 until stateSize) {
+            kalmanList[index] = createKalman()
+        }
     }
 
     private fun disconnect() {
