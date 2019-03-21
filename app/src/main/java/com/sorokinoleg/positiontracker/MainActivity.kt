@@ -120,7 +120,7 @@ class MainActivity :
             when (sensorEvent.sensor) {
 
                 rotationVectorSensor -> {
-                    rotationVector = Quaternion(valuesDouble[0], valuesDouble[1], valuesDouble[2], valuesDouble[3])
+                    rotationVector = Quaternion(valuesDouble[3], valuesDouble[0], valuesDouble[1], valuesDouble[2])
                 }
 
                 accelerometerSensor -> {
@@ -171,7 +171,7 @@ class MainActivity :
 
     private fun predict(data: DoubleArray) {
 
-        val rotated = rotationVector.conjugate.multiply(Quaternion(data)).vectorPart
+        val rotated = rotationVector.inverse.multiply(Quaternion(data)).vectorPart
 
         for (index in 0 until stateSize) {
             kalmanList[index]?.let {
