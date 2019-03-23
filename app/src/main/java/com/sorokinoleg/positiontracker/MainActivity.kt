@@ -28,6 +28,8 @@ class MainActivity :
 
     private var reconnectButton: Button? = null
     private var resetButton: Button? = null
+    private var restartMatlabButton: Button? = null
+    private var resetReconnectButton: Button? = null
     private var statusTextView: TextView? = null
 
     private val serverIP = "10.42.0.1"
@@ -91,6 +93,20 @@ class MainActivity :
             ConnectTask().execute()
         }
 
+        restartMatlabButton = findViewById(R.id.restart_matlab_button)
+        restartMatlabButton?.setOnClickListener {
+            Handler().postDelayed({
+                tcpClient?.sendMessage("Restart\n")
+            }, 1)
+        }
+
+        resetReconnectButton = findViewById(R.id.reset_reconnect_button)
+        resetReconnectButton?.setOnClickListener {
+            disconnect()
+            reset()
+            ConnectTask().execute()
+        }
+
         sensorManager = getSystemService(Context.SENSOR_SERVICE) as? SensorManager
         accelerometerSensor = sensorManager?.getDefaultSensor(Sensor.TYPE_LINEAR_ACCELERATION)
 
@@ -150,6 +166,7 @@ class MainActivity :
         sendLoopRunnable = Runnable {
             if (averageDeltaTimeCalculated) {
                 tcpClient?.sendMessage("${output[0]} ${output[1]} ${output[2]}\n")
+//                tcpClient?.sendMessage(String.format("%.5f %.5f %.5f\n", output[0], output[1], output[2]))
             }
             sendLoopHandler.postDelayed(sendLoopRunnable, sendInterval)
         }
