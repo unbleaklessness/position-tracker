@@ -39,9 +39,8 @@ class MainActivity :
 
     private var lastTimeSendInterval: Long = 0
     private var lastTimeUpdateInterval: Long = 0
-//    private val sendInterval: Long = 1000000
     private val sendInterval: Long = 200
-    private var updateInterval: Long = 0
+    private var updateInterval: Long = -1
 
     private var stateSize = 3
 
@@ -166,8 +165,6 @@ class MainActivity :
 
         for (index in 0 until stateSize) {
 
-//            kalmanList[index]?.get
-
             kalmanList[index]?.let {
                 it.predict()
                 it.correct(doubleArrayOf(data[index]))
@@ -179,8 +176,7 @@ class MainActivity :
     private fun createKalman(): KalmanFilter {
 
         val e = 0.59820562601
-        val s = e.pow(10.0)
-//        val n = 0.000001
+        val s = 0.001
 
         val processModel = DefaultProcessModel(
             arrayOf(
@@ -193,16 +189,6 @@ class MainActivity :
                 doubleArrayOf(0.0),
                 doubleArrayOf(0.0)
             ),
-//            arrayOf(
-//                doubleArrayOf(1.0, 1.0, n),
-//                doubleArrayOf(1.0, n, n * n),
-//                doubleArrayOf(n, n * n, n * n * n * n)
-//            )
-//            arrayOf(
-//                doubleArrayOf(0.25 * dt.pow(4.0) * s, 0.5 * dt.pow(2.0) * s, s),
-//                doubleArrayOf(0.5 * dt.pow(3.0) * s, dt.pow(2.0) * s, dt * s),
-//                doubleArrayOf(0.5 * dt.pow(2.0) * s, dt * s, s)
-//            )
             arrayOf(
                 doubleArrayOf(e, dt * s, 0.5 * dt.pow(2.0) * s),
                 doubleArrayOf(dt * s, dt.pow(2.0) * s, 0.5 * dt.pow(3.0) * s),
@@ -212,16 +198,47 @@ class MainActivity :
 
         val measurementModel = DefaultMeasurementModel(
             arrayOf(doubleArrayOf(0.0, 0.0, 1.0)),
-            arrayOf(doubleArrayOf(s))
+            arrayOf(doubleArrayOf(e.pow(2.0)))
+        )
+
+        return KalmanFilter(processModel, measurementModel)
+    }
+
+    private fun createKalmanZ(): KalmanFilter {
+
+        val e = 0.59820562601
+        val s = 0.0005
+
+        val processModel = DefaultProcessModel(
+            arrayOf(
+                doubleArrayOf(1.0, dt, 0.5 * dt.pow(2.0)),
+                doubleArrayOf(0.0, 1.0, dt),
+                doubleArrayOf(0.0, 0.0, 1.0)
+            ),
+            arrayOf(
+                doubleArrayOf(0.0),
+                doubleArrayOf(0.0),
+                doubleArrayOf(0.0)
+            ),
+            arrayOf(
+                doubleArrayOf(e, dt * s, 0.5 * dt.pow(2.0) * s),
+                doubleArrayOf(dt * s, dt.pow(2.0) * s, 0.5 * dt.pow(3.0) * s),
+                doubleArrayOf(0.5 * dt.pow(2.0) * s, 0.5 * dt.pow(3.0) * s, 0.25 * dt.pow(4.0) * s)
+            )
+        )
+
+        val measurementModel = DefaultMeasurementModel(
+            arrayOf(doubleArrayOf(0.0, 0.0, 1.0)),
+            arrayOf(doubleArrayOf(e.pow(2.0)))
         )
 
         return KalmanFilter(processModel, measurementModel)
     }
 
     private fun initializeKalmans() {
-        for (index in 0 until stateSize) {
-            kalmanList[index] = createKalman()
-        }
+        kalmanList[0] = createKalman()
+        kalmanList[1] = createKalman()
+        kalmanList[2] = createKalmanZ()
     }
 
     private fun disconnect() {
