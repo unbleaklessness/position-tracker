@@ -8,6 +8,7 @@ import android.hardware.SensorManager
 import android.os.AsyncTask
 import android.support.v7.app.AppCompatActivity
 import android.os.Bundle
+import android.os.Handler
 import android.widget.Button
 import android.widget.TextView
 import org.apache.commons.math3.filter.*
@@ -38,8 +39,9 @@ class MainActivity :
 
     private var lastTimeSendInterval: Long = 0
     private var lastTimeUpdateInterval: Long = 0
-    private val sendInterval: Long = 1000000
-    private var updateInterval: Long = 5000000
+//    private val sendInterval: Long = 1000000
+    private val sendInterval: Long = 200
+    private var updateInterval: Long = 0
 
     private var stateSize = 3
 
@@ -54,6 +56,8 @@ class MainActivity :
     private var deltaTimeListSize = 1000
     private var deltaTimeList = LongArray(deltaTimeListSize)
     private var deltaTimeListCount = 0
+
+    private var sendLoopRunnable: Runnable? = null
 
     inner class ConnectTask : AsyncTask<Unit, Unit, Unit>() {
 
@@ -94,6 +98,8 @@ class MainActivity :
         sensorManager?.registerListener(this, accelerometerSensor, SensorManager.SENSOR_DELAY_FASTEST)
 
         ConnectTask().execute()
+
+        startSendLoop()
     }
 
     override fun onPause() {
@@ -129,21 +135,26 @@ class MainActivity :
         event?.let { sensorEvent ->
 
             // Update cached data with measurements, filtered with Kalman:
-            var time: Long = System.nanoTime()
+            val time: Long = System.nanoTime()
             if (time - lastTimeUpdateInterval > updateInterval) {
                 lastTimeUpdateInterval = time
 
                 predict(sensorEvent.values.map { it.toDouble() }.toDoubleArray())
             }
+        }
+    }
 
-            // Send cached data:
-            time = System.nanoTime()
-            if (time - lastTimeSendInterval > sendInterval && averageDeltaTimeCalculated) {
-                lastTimeSendInterval = time
+    private fun startSendLoop() {
 
+        val sendLoopHandler = Handler()
+
+        sendLoopRunnable = Runnable {
+            if (averageDeltaTimeCalculated) {
                 tcpClient?.sendMessage("${output[0]} ${output[1]} ${output[2]}\n")
             }
+            sendLoopHandler.postDelayed(sendLoopRunnable, sendInterval)
         }
+        sendLoopHandler.postDelayed(sendLoopRunnable, sendInterval)
     }
 
     private fun reset() {
@@ -154,6 +165,9 @@ class MainActivity :
     private fun predict(data: DoubleArray) {
 
         for (index in 0 until stateSize) {
+
+//            kalmanList[index]?.get
+
             kalmanList[index]?.let {
                 it.predict()
                 it.correct(doubleArrayOf(data[index]))
@@ -164,15 +178,13 @@ class MainActivity :
 
     private fun createKalman(): KalmanFilter {
 
-        val linearAccelerationError = 0.59820562601
-
-        val s = linearAccelerationError.pow(2)
-        val n = 0.000001
-        val a = 0.5 * dt * dt
+        val e = 0.59820562601
+        val s = e.pow(10.0)
+//        val n = 0.000001
 
         val processModel = DefaultProcessModel(
             arrayOf(
-                doubleArrayOf(1.0, dt, a),
+                doubleArrayOf(1.0, dt, 0.5 * dt.pow(2.0)),
                 doubleArrayOf(0.0, 1.0, dt),
                 doubleArrayOf(0.0, 0.0, 1.0)
             ),
@@ -181,10 +193,20 @@ class MainActivity :
                 doubleArrayOf(0.0),
                 doubleArrayOf(0.0)
             ),
+//            arrayOf(
+//                doubleArrayOf(1.0, 1.0, n),
+//                doubleArrayOf(1.0, n, n * n),
+//                doubleArrayOf(n, n * n, n * n * n * n)
+//            )
+//            arrayOf(
+//                doubleArrayOf(0.25 * dt.pow(4.0) * s, 0.5 * dt.pow(2.0) * s, s),
+//                doubleArrayOf(0.5 * dt.pow(3.0) * s, dt.pow(2.0) * s, dt * s),
+//                doubleArrayOf(0.5 * dt.pow(2.0) * s, dt * s, s)
+//            )
             arrayOf(
-                doubleArrayOf(1.0, 1.0, n),
-                doubleArrayOf(1.0, n, n * n),
-                doubleArrayOf(n, n * n, n * n * n)
+                doubleArrayOf(e, dt * s, 0.5 * dt.pow(2.0) * s),
+                doubleArrayOf(dt * s, dt.pow(2.0) * s, 0.5 * dt.pow(3.0) * s),
+                doubleArrayOf(0.5 * dt.pow(2.0) * s, 0.5 * dt.pow(3.0) * s, 0.25 * dt.pow(4.0) * s)
             )
         )
 
