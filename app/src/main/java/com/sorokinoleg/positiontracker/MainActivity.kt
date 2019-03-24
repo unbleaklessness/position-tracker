@@ -41,7 +41,7 @@ class MainActivity :
 
     private var lastTimeSendInterval: Long = 0
     private var lastTimeUpdateInterval: Long = 0
-    private val sendInterval: Long = 200
+    private val sendInterval: Long = 100
     private var updateInterval: Long = -1
 
     private var stateSize = 3
@@ -180,7 +180,15 @@ class MainActivity :
 
     private fun predict(data: DoubleArray) {
 
+        statusTextView?.text = data[0].toString()
+
         for (index in 0 until stateSize) {
+
+            if (output[index] > 5.0) {
+                output[index] = 5.0
+            } else if (output[index] < -5.0) {
+                output[index] = -5.0
+            }
 
             kalmanList[index]?.let {
                 it.predict()
